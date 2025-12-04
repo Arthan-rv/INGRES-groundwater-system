@@ -27,8 +27,14 @@ app.use(express.json());
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 }
+  limits: { fileSize: 5 * 1024 * 1024 }, // max 5MB
+  fileFilter: (req, file, cb) => {
+    const allowed = ['text/csv', 'application/vnd.ms-excel'];
+    if (allowed.includes(file.mimetype) || /\.csv$/i.test(file.originalname)) cb(null, true);
+    else cb(new Error('Only CSV files allowed'));
+  }
 });
+
 
 // User configuration
 const users = [
@@ -1023,6 +1029,16 @@ app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('❌ Error:', err.message);
+  res.status(err.status || 500).json({
+    success: false,
+    error: err.message || 'Internal Server Error'
+  });
+});
+
 
 app.listen(config.port, () => {
   console.log(`\n🌊 INGRES Groundwater Monitoring System`);
