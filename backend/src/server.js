@@ -6,6 +6,9 @@ const multer = require('multer');
 const { parse } = require('csv-parse/sync');
 const { v4: uuidv4 } = require('uuid');
 require('dotenv').config();
+const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
+
 
 
 // Configuration
@@ -24,6 +27,17 @@ const CSV_FILE = path.join(__dirname, '..', 'data', 'sample_groundwater.csv');
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(morgan('tiny')); // Log every request
+
+// ⏱️ Rate limiting: 60 requests per minute per IP
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' }
+}));
+
 
 const upload = multer({
   storage: multer.memoryStorage(),
