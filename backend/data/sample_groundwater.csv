@@ -1,0 +1,13 @@
+site_id,name,lat,lon,district,state,region,aquifer,survey_date,depth_m,static_water_level_m,yield_lph,tds,pH,conductivity,status,notes
+W001,Well W001,10.8505,78.7047,Thanjavur,Tamil Nadu,Thanjavur Delta,Thanjavur Basin,2025-11-01,45.0,12.3,1500,450,7.2,850,active,Near village canal
+W002,Well W002,11.0001,78.5002,Thiruvarur,Tamil Nadu,Cauvery Delta,Thiruvarur Basin,2025-10-20,50.5,15.1,1200,520,7.4,980,active,Slightly turbid
+W003,Well W003,9.9252,78.1198,Tiruchirappalli,Tamil Nadu,Central Tamil Nadu,Tiruchirappalli Basin,2025-09-15,60.0,8.4,900,410,7.0,780,active,Seasonal drop
+W004,Well W004,10.7867,78.7047,Karur,Tamil Nadu,Western Ghats Foothills,Karur Basin,2025-08-05,35.2,6.2,1800,380,7.1,720,active,Near agricultural field
+W005,Well W005,10.1234,78.2123,Salem,Tamil Nadu,Salem Plateau,Salem Basin,2025-07-10,42.3,9.5,1600,470,7.3,890,active,High yield historically
+W006,Well W006,11.2345,77.5432,Coimbatore,Tamil Nadu,Kongu Region,Coimbatore Basin,2025-06-22,30.0,4.8,2100,350,7.2,660,active,Urban supply
+W007,Well W007,11.9876,78.3210,Erode,Tamil Nadu,Kongu Region,Erode Basin,2025-05-18,48.7,14.0,1100,560,7.5,1050,active,Near industrial area
+W008,Well W008,9.8765,77.6543,Namakkal,Tamil Nadu,Salem Plateau,Namakkal Basin,2025-04-02,55.0,20.1,700,600,7.8,1120,active,Low recharge
+W009,Well W009,10.5555,78.8888,Dindigul,Tamil Nadu,Southern Tamil Nadu,Dindigul Basin,2025-03-12,38.5,7.2,1400,420,7.1,800,active,Stable readings
+W010,Well W010,11.4444,77.9999,Salem,Tamil Nadu,Salem Plateau,Salem Basin,2025-02-25,46.0,10.6,1300,480,7.4,910,active,Recently cleaned borehole
+W011,Well W011,10.9999,78.4444,Madurai,Tamil Nadu,Southern Tamil Nadu,Madurai Basin,2025-01-05,62.0,22.5,500,700,8.1,1320,active,High TDS
+W012,Well W012,9.5000,77.4000,Theni,Tamil Nadu,Southern Tamil Nadu,Theni Basin,2024-12-15,29.0,3.8,2500,330,6.9,620,active,Excellent yield

@@ -226,35 +226,81 @@ const loadFromCSV = () => {
     });
     
     return rows.map((row) => {
-      const tds = Number(row.tds || 0);
-      let risk = 'Low';
-      if (tds >= 600) risk = 'High';
-      else if (tds >= 500) risk = 'Moderate';
+      const tds = Number(row.tds || row.tdsLevel || 0);
+      let risk = row.contaminationRisk || 'Low';
+      if (!risk || risk === 'Low' || risk === 'Moderate' || risk === 'High') {
+        if (tds >= 600) risk = 'High';
+        else if (tds >= 500) risk = 'Moderate';
+        else risk = 'Low';
+      }
       
-      const yieldLph = Number(row.yield_lph || 0);
-      let trend = 'Stable';
-      if (yieldLph < 1000) trend = 'Declining';
-      else if (yieldLph > 1800) trend = 'Rising';
+      const yieldLph = Number(row.yield_lph || row.yieldLph || 0);
+      let trend = row.rechargeTrend || 'Stable';
+      if (!trend || trend === 'Stable' || trend === 'Rising' || trend === 'Declining') {
+        if (yieldLph < 1000) trend = 'Declining';
+        else if (yieldLph > 1800) trend = 'Rising';
+        else trend = 'Stable';
+      }
+      
+      // Calculate water quality grade if not provided
+      let grade = row.waterQualityGrade;
+      if (!grade) {
+        const nitrate = Number(row.nitrate || 0);
+        const fluoride = Number(row.fluoride || 0);
+        if (tds < 400 && nitrate < 40 && fluoride < 0.8) grade = 'A';
+        else if (tds < 500 && nitrate < 50) grade = 'B';
+        else if (tds < 600) grade = 'C';
+        else grade = 'D';
+      }
+      
+      // Determine suitability
+      const nitrate = Number(row.nitrate || 0);
+      const fluoride = Number(row.fluoride || 0);
+      const arsenic = Number(row.arsenic || 0);
+      const suitableDrinking = row.suitableForDrinking !== undefined ? 
+        (row.suitableForDrinking === 'true' || row.suitableForDrinking === true) :
+        (tds < 500 && nitrate < 45 && fluoride < 1.0 && arsenic < 0.01);
+      const suitableIrrigation = row.suitableForIrrigation !== undefined ?
+        (row.suitableForIrrigation === 'true' || row.suitableForIrrigation === true) :
+        (tds < 900);
       
       return {
-        id: row.site_id || `SITE-${Date.now()}`,
+        id: row.site_id || row.id || `SITE-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         name: row.name || 'Unknown Well',
         region: row.region || row.district || 'Unknown Region',
         district: row.district || 'Unknown',
         state: row.state || 'Tamil Nadu',
         lat: Number(row.lat || 0),
         lon: Number(row.lon || 0),
-        aquifer: row.aquifer || `${row.district} Basin`,
+        aquifer: row.aquifer || `${row.district || 'Unknown'} Basin`,
         tdsLevel: tds,
-        pH: Number(row.pH || 7.0),
+        pH: Number(row.pH || row.ph || 7.0),
         conductivity: Number(row.conductivity || tds * 1.8),
+        hardness: Number(row.hardness || 0),
+        alkalinity: Number(row.alkalinity || 0),
+        nitrate: nitrate,
+        fluoride: Number(row.fluoride || 0),
+        chloride: Number(row.chloride || 0),
+        sulfate: Number(row.sulfate || 0),
+        iron: Number(row.iron || 0),
+        arsenic: arsenic,
         contaminationRisk: risk,
-        waterLevelMeters: Number(row.static_water_level_m || row.depth_m || 0),
-        depthMeters: Number(row.depth_m || 0),
+        waterLevelMeters: Number(row.static_water_level_m || row.waterLevelMeters || row.depth_m || 0),
+        depthMeters: Number(row.depth_m || row.depthMeters || 0),
         yieldLph: yieldLph,
         rechargeTrend: trend,
         status: row.status || 'active',
-        lastInspection: row.survey_date || new Date().toISOString().slice(0, 10),
+        lastInspection: row.survey_date || row.lastInspection || new Date().toISOString().slice(0, 10),
+        wellType: row.wellType || row.well_type || 'Borewell',
+        usageType: row.usageType || row.usage_type || 'Domestic',
+        ownership: row.ownership || 'Government',
+        waterSource: row.waterSource || row.water_source || 'Unconfined Aquifer',
+        waterQualityGrade: grade,
+        suitableForDrinking: suitableDrinking,
+        suitableForIrrigation: suitableIrrigation,
+        nearbyLandUse: row.nearbyLandUse || row.nearby_land_use || 'Unknown',
+        seasonalVariation: row.seasonalVariation || row.seasonal_variation || 'Moderate',
+        infrastructure: row.infrastructure || 'Pump installed',
         notes: row.notes || ''
       };
     });
@@ -282,7 +328,7 @@ const mergeDataSources = () => {
   primaryData.forEach(record => {
     if (record.id) dataMap.set(record.id, record);
   });
-  console.log(`Loaded ${primaryData.length} records from primary data file`);
+  console.log(`✅ Loaded ${primaryData.length} records from primary data file (${DATA_FILE})`);
   
   const wellsData = loadJSONData(WELLS_FILE);
   wellsData.forEach(record => {
@@ -291,18 +337,24 @@ const mergeDataSources = () => {
     }
   });
   if (wellsData.length > 0) {
-    console.log(`Loaded ${wellsData.length} records from wells data file`);
+    console.log(`✅ Loaded ${wellsData.length} additional records from wells data file`);
   }
   
   if (dataMap.size === 0) {
+    console.log(`⚠️  No data found in JSON files, loading from CSV...`);
     const csvData = loadFromCSV();
     csvData.forEach(record => {
       if (record.id) dataMap.set(record.id, record);
     });
-    console.log(`Loaded ${csvData.length} records from CSV file`);
+    console.log(`✅ Loaded ${csvData.length} records from CSV file`);
   }
   
-  return Array.from(dataMap.values());
+  const totalRecords = Array.from(dataMap.values());
+  const districts = [...new Set(totalRecords.map(r => r.district).filter(Boolean))];
+  console.log(`📊 Total records loaded: ${totalRecords.length}`);
+  console.log(`📍 Districts covered: ${districts.length} (${districts.slice(0, 5).join(', ')}${districts.length > 5 ? '...' : ''})`);
+  
+  return totalRecords;
 };
 
 let groundwaterData = mergeDataSources();
@@ -438,37 +490,157 @@ const formatWellResponse = (site, lang = 'en') => {
   
   const contact = getMunicipalityContact(site.district);
   
+  // Translations for well response
+  const labels = {
+    en: {
+      waterQuality: 'Water Quality',
+      wellInfo: 'Well Information',
+      status: 'Status',
+      suitability: 'Suitability',
+      notes: 'Notes',
+      localSupport: 'Local Support',
+      office: 'Office',
+      phone: 'Phone',
+      helpline: 'Helpline',
+      riskLevel: 'Risk Level',
+      trend: 'Trend',
+      lastSurvey: 'Last Survey',
+      drinking: 'Drinking',
+      irrigation: 'Irrigation',
+      suitable: 'Suitable',
+      notSuitable: 'Not Suitable',
+      waterLevel: 'Water Level',
+      depth: 'Depth',
+      yield: 'Yield',
+      wellType: 'Well Type',
+      usage: 'Usage',
+      source: 'Source',
+      qualityGrade: 'Quality Grade'
+    },
+    ta: {
+      waterQuality: 'நீர் தரம்',
+      wellInfo: 'கிணறு தகவல்',
+      status: 'நிலை',
+      suitability: 'பயன்பாட்டிற்கு ஏற்றது',
+      notes: 'குறிப்புகள்',
+      localSupport: 'உள்ளூர் ஆதரவு',
+      office: 'அலுவலகம்',
+      phone: 'தொலைபேசி',
+      helpline: 'உதவி எண்',
+      riskLevel: 'ஆபத்து நிலை',
+      trend: 'போக்கு',
+      lastSurvey: 'கடைசி ஆய்வு',
+      drinking: 'குடிக்க',
+      irrigation: 'பாசனம்',
+      suitable: 'பயன்பாட்டிற்கு ஏற்றது',
+      notSuitable: 'பயன்பாட்டிற்கு ஏற்றதல்ல',
+      waterLevel: 'நீர் மட்டம்',
+      depth: 'ஆழம்',
+      yield: 'விளைச்சல்',
+      wellType: 'கிணறு வகை',
+      usage: 'பயன்பாடு',
+      source: 'மூலம்',
+      qualityGrade: 'தரம்'
+    },
+    hi: {
+      waterQuality: 'जल गुणवत्ता',
+      wellInfo: 'कुआं जानकारी',
+      status: 'स्थिति',
+      suitability: 'उपयुक्तता',
+      notes: 'टिप्पणियाँ',
+      localSupport: 'स्थानीय सहायता',
+      office: 'कार्यालय',
+      phone: 'फोन',
+      helpline: 'हेल्पलाइन',
+      riskLevel: 'जोखिम स्तर',
+      trend: 'रुझान',
+      lastSurvey: 'अंतिम सर्वेक्षण',
+      drinking: 'पीने',
+      irrigation: 'सिंचाई',
+      suitable: 'उपयुक्त',
+      notSuitable: 'अनुपयुक्त',
+      waterLevel: 'जल स्तर',
+      depth: 'गहराई',
+      yield: 'उपज',
+      wellType: 'कुआं प्रकार',
+      usage: 'उपयोग',
+      source: 'स्रोत',
+      qualityGrade: 'गुणवत्ता ग्रेड'
+    },
+    te: {
+      waterQuality: 'నీటి నాణ్యత',
+      wellInfo: 'బావి సమాచారం',
+      status: 'స్థితి',
+      suitability: 'అనుకూలత',
+      notes: 'గమనికలు',
+      localSupport: 'స్థానిక మద్దతు',
+      office: 'కార్యాలయం',
+      phone: 'ఫోన్',
+      helpline: 'హెల్ప్‌లైన్',
+      riskLevel: 'ప్రమాద స్థాయి',
+      trend: 'ప్రవృత్తి',
+      lastSurvey: 'చివరి సర్వే',
+      drinking: 'త్రాగడం',
+      irrigation: 'నీటిపారుదల',
+      suitable: 'అనుకూలం',
+      notSuitable: 'అననుకూలం',
+      waterLevel: 'నీటి స్థాయి',
+      depth: 'లోతు',
+      yield: 'దిగుబడి',
+      wellType: 'బావి రకం',
+      usage: 'వినియోగం',
+      source: 'మూలం',
+      qualityGrade: 'నాణ్యత గ్రేడ్'
+    }
+  };
+  
+  const l = labels[lang] || labels.en;
+  
   const lines = [
     `📍 **${site.name}**`,
     `   ${site.district}, ${site.region}`,
     ``,
-    `📊 **Water Quality:**`,
+    `📊 **${l.waterQuality}:**`,
     `   • TDS: ${site.tdsLevel} mg/L`,
     `   • pH: ${site.pH}`,
     `   • Conductivity: ${site.conductivity} µS/cm`,
+    ...(site.hardness ? [`   • Hardness: ${site.hardness} mg/L`] : []),
+    ...(site.nitrate ? [`   • Nitrate: ${site.nitrate} mg/L`] : []),
+    ...(site.fluoride ? [`   • Fluoride: ${site.fluoride} mg/L`] : []),
+    ...(site.chloride ? [`   • Chloride: ${site.chloride} mg/L`] : []),
+    ...(site.waterQualityGrade ? [`   • ${l.qualityGrade}: ${site.waterQualityGrade}`] : []),
     ``,
-    `💧 **Well Information:**`,
-    `   • Water Level: ${site.waterLevelMeters}m`,
-    `   • Depth: ${site.depthMeters}m`,
-    `   • Yield: ${site.yieldLph} LPH`,
+    `💧 **${l.wellInfo}:**`,
+    `   • ${l.waterLevel}: ${site.waterLevelMeters}m`,
+    `   • ${l.depth}: ${site.depthMeters}m`,
+    `   • ${l.yield}: ${site.yieldLph} LPH`,
+    ...(site.wellType ? [`   • ${l.wellType}: ${site.wellType}`] : []),
+    ...(site.usageType ? [`   • ${l.usage}: ${site.usageType}`] : []),
+    ...(site.waterSource ? [`   • ${l.source}: ${site.waterSource}`] : []),
     ``,
-    `📈 **Status:**`,
-    `   • Risk Level: ${site.contaminationRisk} ${riskEmoji}`,
-    `   • Trend: ${site.rechargeTrend}`,
+    `📈 **${l.status}:**`,
+    `   • ${l.riskLevel}: ${site.contaminationRisk} ${riskEmoji}`,
+    `   • ${l.trend}: ${site.rechargeTrend}`,
     `   • Status: ${site.status} ${statusEmoji}`,
-    `   • Last Survey: ${site.lastInspection}`,
+    `   • ${l.lastSurvey}: ${site.lastInspection}`,
+    ...(site.suitableForDrinking !== undefined ? [
+      ``,
+      `✅ **${l.suitability}:**`,
+      `   • ${l.drinking}: ${site.suitableForDrinking ? `✅ ${l.suitable}` : `❌ ${l.notSuitable}`}`,
+      `   • ${l.irrigation}: ${site.suitableForIrrigation !== false ? `✅ ${l.suitable}` : `❌ ${l.notSuitable}`}`
+    ] : []),
   ];
   
   if (site.notes) {
-    lines.push(``, `📝 **Notes:** ${site.notes}`);
+    lines.push(``, `📝 **${l.notes}:** ${site.notes}`);
   }
   
   lines.push(
     ``,
-    `📞 **Local Support (${site.district}):**`,
-    `   • Office: ${contact.office}`,
-    `   • Phone: ${contact.phone}`,
-    `   • Helpline: ${contact.helpline}`
+    `📞 **${l.localSupport} (${site.district}):**`,
+    `   • ${l.office}: ${contact.office}`,
+    `   • ${l.phone}: ${contact.phone}`,
+    `   • ${l.helpline}: ${contact.helpline}`
   );
   
   return lines.join('\n');
@@ -477,36 +649,145 @@ const formatWellResponse = (site, lang = 'en') => {
 const formatOverviewResponse = (data, lang = 'en') => {
   const s = calculateOverview(data);
   
+  const labels = {
+    en: {
+      title: 'Groundwater Overview',
+      networkStats: 'Network Statistics',
+      totalWells: 'Total Wells',
+      active: 'Active',
+      maintenance: 'Under Maintenance',
+      districtsCovered: 'Districts Covered',
+      waterQuality: 'Water Quality',
+      avgTDS: 'Average TDS',
+      avgPH: 'Average pH',
+      avgYield: 'Average Yield',
+      riskAssessment: 'Risk Assessment',
+      highRisk: 'High Risk',
+      moderateRisk: 'Moderate Risk',
+      safe: 'Safe (TDS < 500)',
+      wells: 'wells',
+      rechargeTrends: 'Recharge Trends',
+      rising: 'Rising',
+      stable: 'Stable',
+      declining: 'Declining',
+      lastSurvey: 'Last Survey',
+      stateHelplines: 'State Helplines',
+      waterBoard: 'Water Board',
+      groundwaterAuth: 'Groundwater Authority',
+      pollutionControl: 'Pollution Control'
+    },
+    ta: {
+      title: 'நிலத்தடி நீர் கண்ணோட்டம்',
+      networkStats: 'வலைப்பின்னல் புள்ளிவிவரங்கள்',
+      totalWells: 'மொத்த கிணறுகள்',
+      active: 'செயலில்',
+      maintenance: 'பராமரிப்பில்',
+      districtsCovered: 'மாவட்டங்கள்',
+      waterQuality: 'நீர் தரம்',
+      avgTDS: 'சராசரி TDS',
+      avgPH: 'சராசரி pH',
+      avgYield: 'சராசரி விளைச்சல்',
+      riskAssessment: 'ஆபத்து மதிப்பீடு',
+      highRisk: 'உயர் ஆபத்து',
+      moderateRisk: 'மிதமான ஆபத்து',
+      safe: 'பாதுகாப்பான (TDS < 500)',
+      wells: 'கிணறுகள்',
+      rechargeTrends: 'ரீசார்ஜ் போக்குகள்',
+      rising: 'அதிகரிக்கும்',
+      stable: 'நிலையான',
+      declining: 'குறையும்',
+      lastSurvey: 'கடைசி ஆய்வு',
+      stateHelplines: 'மாநில உதவி எண்கள்',
+      waterBoard: 'நீர் வாரியம்',
+      groundwaterAuth: 'நிலத்தடி நீர் அதிகாரம்',
+      pollutionControl: 'மாசு கட்டுப்பாடு'
+    },
+    hi: {
+      title: 'भूजल अवलोकन',
+      networkStats: 'नेटवर्क आंकड़े',
+      totalWells: 'कुल कुएं',
+      active: 'सक्रिय',
+      maintenance: 'रखरखाव में',
+      districtsCovered: 'जिले कवर',
+      waterQuality: 'जल गुणवत्ता',
+      avgTDS: 'औसत TDS',
+      avgPH: 'औसत pH',
+      avgYield: 'औसत उपज',
+      riskAssessment: 'जोखिम मूल्यांकन',
+      highRisk: 'उच्च जोखिम',
+      moderateRisk: 'मध्यम जोखिम',
+      safe: 'सुरक्षित (TDS < 500)',
+      wells: 'कुएं',
+      rechargeTrends: 'रिचार्ज रुझान',
+      rising: 'बढ़ रहा',
+      stable: 'स्थिर',
+      declining: 'गिर रहा',
+      lastSurvey: 'अंतिम सर्वेक्षण',
+      stateHelplines: 'राज्य हेल्पलाइन',
+      waterBoard: 'जल बोर्ड',
+      groundwaterAuth: 'भूजल प्राधिकरण',
+      pollutionControl: 'प्रदूषण नियंत्रण'
+    },
+    te: {
+      title: 'భూగర్భజల అవలోకనం',
+      networkStats: 'నెట్‌వర్క్ గణాంకాలు',
+      totalWells: 'మొత్తం బావులు',
+      active: 'సక్రియ',
+      maintenance: 'నిర్వహణలో',
+      districtsCovered: 'జిల్లాలు',
+      waterQuality: 'నీటి నాణ్యత',
+      avgTDS: 'సగటు TDS',
+      avgPH: 'సగటు pH',
+      avgYield: 'సగటు దిగుబడి',
+      riskAssessment: 'ప్రమాద అంచనా',
+      highRisk: 'అధిక ప్రమాదం',
+      moderateRisk: 'మధ్యస్థ ప్రమాదం',
+      safe: 'సురక్షితం (TDS < 500)',
+      wells: 'బావులు',
+      rechargeTrends: 'రీఛార్జ్ ప్రవృత్తులు',
+      rising: 'పెరుగుతున్న',
+      stable: 'స్థిరమైన',
+      declining: 'తగ్గుతున్న',
+      lastSurvey: 'చివరి సర్వే',
+      stateHelplines: 'రాష్ట్ర హెల్ప్‌లైన్‌లు',
+      waterBoard: 'నీటి బోర్డు',
+      groundwaterAuth: 'భూగర్భజల అధికారం',
+      pollutionControl: 'కాలుష్య నియంత్రణ'
+    }
+  };
+  
+  const l = labels[lang] || labels.en;
+  
   const lines = [
-    `📊 **Groundwater Overview**`,
+    `📊 **${l.title}**`,
     ``,
-    `🔢 **Network Statistics:**`,
-    `   • Total Wells: ${s.totalSites}`,
-    `   • Active: ${s.activeSites}`,
-    `   • Under Maintenance: ${s.maintenanceSites}`,
-    `   • Districts Covered: ${s.districts.length}`,
+    `🔢 **${l.networkStats}:**`,
+    `   • ${l.totalWells}: ${s.totalSites}`,
+    `   • ${l.active}: ${s.activeSites}`,
+    `   • ${l.maintenance}: ${s.maintenanceSites}`,
+    `   • ${l.districtsCovered}: ${s.districts.length}`,
     ``,
-    `💧 **Water Quality:**`,
-    `   • Average TDS: ${s.avgTds} mg/L`,
-    `   • Average pH: ${s.avgPH}`,
-    `   • Average Yield: ${s.avgYield} LPH`,
+    `💧 **${l.waterQuality}:**`,
+    `   • ${l.avgTDS}: ${s.avgTds} mg/L`,
+    `   • ${l.avgPH}: ${s.avgPH}`,
+    `   • ${l.avgYield}: ${s.avgYield} LPH`,
     ``,
-    `⚠️ **Risk Assessment:**`,
-    `   • High Risk: ${s.highRiskSites} wells`,
-    `   • Moderate Risk: ${s.moderateRiskSites} wells`,
-    `   • Safe (TDS < 500): ${s.safeSites} wells`,
+    `⚠️ **${l.riskAssessment}:**`,
+    `   • ${l.highRisk}: ${s.highRiskSites} ${l.wells}`,
+    `   • ${l.moderateRisk}: ${s.moderateRiskSites} ${l.wells}`,
+    `   • ${l.safe}: ${s.safeSites} ${l.wells}`,
     ``,
-    `📈 **Recharge Trends:**`,
-    `   • Rising: ${s.risingSites}`,
-    `   • Stable: ${s.stableSites}`,
-    `   • Declining: ${s.decliningSites}`,
+    `📈 **${l.rechargeTrends}:**`,
+    `   • ${l.rising}: ${s.risingSites}`,
+    `   • ${l.stable}: ${s.stableSites}`,
+    `   • ${l.declining}: ${s.decliningSites}`,
     ``,
-    `📅 **Last Survey:** ${s.latestInspection}`,
+    `📅 **${l.lastSurvey}:** ${s.latestInspection || t(lang, 'notSure')}`,
     ``,
-    `📞 **State Helplines:**`,
-    `   • Water Board: ${stateContacts.tnWaterBoard.helpline}`,
-    `   • Groundwater Authority: ${stateContacts.groundwaterAuth.phone}`,
-    `   • Pollution Control: ${stateContacts.pollutionBoard.helpline}`
+    `📞 **${l.stateHelplines}:**`,
+    `   • ${l.waterBoard}: ${stateContacts.tnWaterBoard.helpline}`,
+    `   • ${l.groundwaterAuth}: ${stateContacts.groundwaterAuth.phone}`,
+    `   • ${l.pollutionControl}: ${stateContacts.pollutionBoard.helpline}`
   ];
   
   return lines.join('\n');
@@ -516,19 +797,28 @@ const formatTDSResponse = (data, lang = 'en') => {
   const { avgTds, safeSites, totalSites } = calculateOverview(data);
   const highTdsSites = data.filter(row => row.tdsLevel >= 500).slice(0, 5);
   
+  const labels = {
+    en: { title: 'TDS Analysis', stats: 'Overall Statistics', avgTDS: 'Average TDS', safeWells: 'Safe Wells (< 500 mg/L)', safetyRate: 'Safety Rate', highTDS: 'High TDS Wells (≥ 500 mg/L)', guidelines: 'TDS Guidelines', excellent: 'Excellent', good: 'Good', fair: 'Fair', poor: 'Poor', reportIssues: 'Report Issues' },
+    ta: { title: 'TDS பகுப்பாய்வு', stats: 'மொத்த புள்ளிவிவரங்கள்', avgTDS: 'சராசரி TDS', safeWells: 'பாதுகாப்பான கிணறுகள் (< 500 mg/L)', safetyRate: 'பாதுகாப்பு விகிதம்', highTDS: 'உயர் TDS கிணறுகள் (≥ 500 mg/L)', guidelines: 'TDS வழிகாட்டிகள்', excellent: 'சிறந்தது', good: 'நல்லது', fair: 'நடுத்தரம்', poor: 'மோசமானது', reportIssues: 'பிரச்சினைகளை அறிவிக்க' },
+    hi: { title: 'TDS विश्लेषण', stats: 'समग्र आंकड़े', avgTDS: 'औसत TDS', safeWells: 'सुरक्षित कुएं (< 500 mg/L)', safetyRate: 'सुरक्षा दर', highTDS: 'उच्च TDS कुएं (≥ 500 mg/L)', guidelines: 'TDS दिशानिर्देश', excellent: 'उत्कृष्ट', good: 'अच्छा', fair: 'उचित', poor: 'खराब', reportIssues: 'मुद्दों की रिपोर्ट करें' },
+    te: { title: 'TDS విశ్లేషణ', stats: 'మొత్తం గణాంకాలు', avgTDS: 'సగటు TDS', safeWells: 'సురక్షిత బావులు (< 500 mg/L)', safetyRate: 'భద్రత రేటు', highTDS: 'అధిక TDS బావులు (≥ 500 mg/L)', guidelines: 'TDS మార్గదర్శకాలు', excellent: 'అద్భుతమైన', good: 'మంచిది', fair: 'న్యాయమైన', poor: 'చెడ్డ', reportIssues: 'సమస్యలను నివేదించండి' }
+  };
+  
+  const l = labels[lang] || labels.en;
+  
   const lines = [
-    `💧 **TDS Analysis**`,
+    `💧 **${l.title}**`,
     ``,
-    `📊 **Overall Statistics:**`,
-    `   • Average TDS: ${avgTds} mg/L`,
-    `   • Safe Wells (< 500 mg/L): ${safeSites} of ${totalSites}`,
-    `   • Safety Rate: ${((safeSites/totalSites)*100).toFixed(1)}%`,
+    `📊 **${l.stats}:**`,
+    `   • ${l.avgTDS}: ${avgTds} mg/L`,
+    `   • ${l.safeWells}: ${safeSites} of ${totalSites}`,
+    `   • ${l.safetyRate}: ${((safeSites/totalSites)*100).toFixed(1)}%`,
   ];
   
   if (highTdsSites.length > 0) {
     lines.push(
       ``,
-      `⚠️ **High TDS Wells (≥ 500 mg/L):**`
+      `⚠️ **${l.highTDS}:**`
     );
     highTdsSites.forEach(site => {
       lines.push(`   • ${site.name}: ${site.tdsLevel} mg/L (${site.district})`);
@@ -537,13 +827,13 @@ const formatTDSResponse = (data, lang = 'en') => {
   
   lines.push(
     ``,
-    `ℹ️ **TDS Guidelines:**`,
-    `   • < 300 mg/L: Excellent`,
-    `   • 300-500 mg/L: Good`,
-    `   • 500-900 mg/L: Fair`,
-    `   • > 900 mg/L: Poor`,
+    `ℹ️ **${l.guidelines}:**`,
+    `   • < 300 mg/L: ${l.excellent}`,
+    `   • 300-500 mg/L: ${l.good}`,
+    `   • 500-900 mg/L: ${l.fair}`,
+    `   • > 900 mg/L: ${l.poor}`,
     ``,
-    `📞 **Report Issues:** ${stateContacts.tnWaterBoard.helpline}`
+    `📞 **${l.reportIssues}:** ${stateContacts.tnWaterBoard.helpline}`
   );
   
   return lines.join('\n');
@@ -553,38 +843,47 @@ const formatRiskResponse = (data, lang = 'en') => {
   const { highRiskSites, moderateRiskSites, safeSites, totalSites } = calculateOverview(data);
   const highRiskWells = data.filter(row => row.contaminationRisk?.toLowerCase() === 'high').slice(0, 5);
   
+  const labels = {
+    en: { title: 'Risk Assessment Report', distribution: 'Risk Distribution', highRisk: 'High Risk', moderateRisk: 'Moderate Risk', lowRisk: 'Low Risk', safeWells: 'Safe Wells (TDS < 500)', highRiskWells: 'High Risk Wells', district: 'District', contact: 'Contact', emergencyContacts: 'Emergency Contacts', waterBoard: 'Water Board', pollutionBoard: 'Pollution Board' },
+    ta: { title: 'ஆபத்து மதிப்பீட்டு அறிக்கை', distribution: 'ஆபத்து பரவல்', highRisk: 'உயர் ஆபத்து', moderateRisk: 'மிதமான ஆபத்து', lowRisk: 'குறைந்த ஆபத்து', safeWells: 'பாதுகாப்பான கிணறுகள் (TDS < 500)', highRiskWells: 'உயர் ஆபத்து கிணறுகள்', district: 'மாவட்டம்', contact: 'தொடர்பு', emergencyContacts: 'அவசர தொடர்புகள்', waterBoard: 'நீர் வாரியம்', pollutionBoard: 'மாசு வாரியம்' },
+    hi: { title: 'जोखिम मूल्यांकन रिपोर्ट', distribution: 'जोखिम वितरण', highRisk: 'उच्च जोखिम', moderateRisk: 'मध्यम जोखिम', lowRisk: 'कम जोखिम', safeWells: 'सुरक्षित कुएं (TDS < 500)', highRiskWells: 'उच्च जोखिम कुएं', district: 'जिला', contact: 'संपर्क', emergencyContacts: 'आपातकालीन संपर्क', waterBoard: 'जल बोर्ड', pollutionBoard: 'प्रदूषण बोर्ड' },
+    te: { title: 'ప్రమాద అంచనా నివేదిక', distribution: 'ప్రమాద పంపిణీ', highRisk: 'అధిక ప్రమాదం', moderateRisk: 'మధ్యస్థ ప్రమాదం', lowRisk: 'తక్కువ ప్రమాదం', safeWells: 'సురక్షిత బావులు (TDS < 500)', highRiskWells: 'అధిక ప్రమాద బావులు', district: 'జిల్లా', contact: 'సంప్రదింపు', emergencyContacts: 'అత్యవసర సంప్రదింపులు', waterBoard: 'నీటి బోర్డు', pollutionBoard: 'కాలుష్య బోర్డు' }
+  };
+  
+  const l = labels[lang] || labels.en;
+  
   const lines = [
-    `⚠️ **Risk Assessment Report**`,
+    `⚠️ **${l.title}**`,
     ``,
-    `📊 **Risk Distribution:**`,
-    `   • 🔴 High Risk: ${highRiskSites} wells`,
-    `   • 🟡 Moderate Risk: ${moderateRiskSites} wells`,
-    `   • 🟢 Low Risk: ${totalSites - highRiskSites - moderateRiskSites} wells`,
+    `📊 **${l.distribution}:**`,
+    `   • 🔴 ${l.highRisk}: ${highRiskSites} wells`,
+    `   • 🟡 ${l.moderateRisk}: ${moderateRiskSites} wells`,
+    `   • 🟢 ${l.lowRisk}: ${totalSites - highRiskSites - moderateRiskSites} wells`,
     ``,
-    `✅ **Safe Wells (TDS < 500):** ${safeSites}`,
+    `✅ **${l.safeWells}:** ${safeSites}`,
   ];
   
   if (highRiskWells.length > 0) {
     lines.push(
       ``,
-      `🚨 **High Risk Wells:**`
+      `🚨 **${l.highRiskWells}:**`
     );
     highRiskWells.forEach(site => {
       const contact = getMunicipalityContact(site.district);
       lines.push(
         `   • ${site.name}`,
-        `     District: ${site.district}`,
+        `     ${l.district}: ${site.district}`,
         `     TDS: ${site.tdsLevel} mg/L`,
-        `     Contact: ${contact.helpline}`
+        `     ${l.contact}: ${contact.helpline}`
       );
     });
   }
   
   lines.push(
     ``,
-    `📞 **Emergency Contacts:**`,
-    `   • Water Board: ${stateContacts.tnWaterBoard.helpline}`,
-    `   • Pollution Board: ${stateContacts.pollutionBoard.helpline}`
+    `📞 **${l.emergencyContacts}:**`,
+    `   • ${l.waterBoard}: ${stateContacts.tnWaterBoard.helpline}`,
+    `   • ${l.pollutionBoard}: ${stateContacts.pollutionBoard.helpline}`
   );
   
   return lines.join('\n');
@@ -703,6 +1002,161 @@ const formatDistrictResponse = (districtSites, lang = 'en') => {
   return lines.join('\n');
 };
 
+const formatFluorideResponse = (data, lang = 'en') => {
+  const wellsWithFluoride = data.filter(w => w.fluoride !== undefined && w.fluoride > 0);
+  const highFluoride = wellsWithFluoride.filter(w => w.fluoride >= 1.0);
+  const moderateFluoride = wellsWithFluoride.filter(w => w.fluoride >= 0.7 && w.fluoride < 1.0);
+  const avgFluoride = wellsWithFluoride.length > 0 ? 
+    (wellsWithFluoride.reduce((sum, w) => sum + w.fluoride, 0) / wellsWithFluoride.length).toFixed(2) : 0;
+  
+  const lines = [
+    `💧 **Fluoride Analysis**`,
+    ``,
+    `📊 **Statistics:**`,
+    `   • Average Fluoride: ${avgFluoride} mg/L`,
+    `   • High Fluoride (≥1.0 mg/L): ${highFluoride.length} wells`,
+    `   • Moderate (0.7-1.0 mg/L): ${moderateFluoride.length} wells`,
+    `   • Safe (<0.7 mg/L): ${wellsWithFluoride.length - highFluoride.length - moderateFluoride.length} wells`,
+  ];
+  
+  if (highFluoride.length > 0) {
+    lines.push(``, `⚠️ **High Fluoride Wells (Require Defluoridation):**`);
+    highFluoride.slice(0, 5).forEach(site => {
+      lines.push(`   • ${site.name}: ${site.fluoride} mg/L (${site.district})`);
+    });
+  }
+  
+  lines.push(
+    ``,
+    `ℹ️ **Fluoride Guidelines:**`,
+    `   • < 0.7 mg/L: Safe`,
+    `   • 0.7-1.0 mg/L: Moderate (dental fluorosis risk)`,
+    `   • 1.0-1.5 mg/L: High (skeletal fluorosis risk)`,
+    `   • > 1.5 mg/L: Very High (severe health risk)`,
+    ``,
+    `📞 **Treatment Support:** ${stateContacts.groundwaterAuth.phone}`
+  );
+  
+  return lines.join('\n');
+};
+
+const formatNitrateResponse = (data, lang = 'en') => {
+  const wellsWithNitrate = data.filter(w => w.nitrate !== undefined && w.nitrate > 0);
+  const highNitrate = wellsWithNitrate.filter(w => w.nitrate >= 45);
+  const moderateNitrate = wellsWithNitrate.filter(w => w.nitrate >= 30 && w.nitrate < 45);
+  const avgNitrate = wellsWithNitrate.length > 0 ?
+    (wellsWithNitrate.reduce((sum, w) => sum + w.nitrate, 0) / wellsWithNitrate.length).toFixed(1) : 0;
+  
+  const lines = [
+    `💧 **Nitrate Analysis**`,
+    ``,
+    `📊 **Statistics:**`,
+    `   • Average Nitrate: ${avgNitrate} mg/L`,
+    `   • High Nitrate (≥45 mg/L): ${highNitrate.length} wells`,
+    `   • Moderate (30-45 mg/L): ${moderateNitrate.length} wells`,
+    `   • Safe (<30 mg/L): ${wellsWithNitrate.length - highNitrate.length - moderateNitrate.length} wells`,
+  ];
+  
+  if (highNitrate.length > 0) {
+    lines.push(``, `⚠️ **High Nitrate Wells:**`);
+    highNitrate.slice(0, 5).forEach(site => {
+      lines.push(`   • ${site.name}: ${site.nitrate} mg/L (${site.district})`);
+    });
+  }
+  
+  lines.push(
+    ``,
+    `ℹ️ **Nitrate Guidelines:**`,
+    `   • < 30 mg/L: Safe for drinking`,
+    `   • 30-45 mg/L: Acceptable (infants at risk)`,
+    `   • 45-100 mg/L: High (methemoglobinemia risk)`,
+    `   • > 100 mg/L: Very High (severe health risk)`,
+    ``,
+    `📞 **Report Issues:** ${stateContacts.pollutionBoard.helpline}`
+  );
+  
+  return lines.join('\n');
+};
+
+const formatDrinkingWaterResponse = (data, lang = 'en') => {
+  const suitableWells = data.filter(w => w.suitableForDrinking === true);
+  const unsuitableWells = data.filter(w => w.suitableForDrinking === false);
+  const totalWells = data.length;
+  
+  const lines = [
+    `💧 **Drinking Water Suitability Report**`,
+    ``,
+    `📊 **Statistics:**`,
+    `   • Suitable for Drinking: ${suitableWells.length} wells (${((suitableWells.length/totalWells)*100).toFixed(1)}%)`,
+    `   • Not Suitable: ${unsuitableWells.length} wells (${((unsuitableWells.length/totalWells)*100).toFixed(1)}%)`,
+  ];
+  
+  if (unsuitableWells.length > 0) {
+    lines.push(``, `⚠️ **Wells Not Suitable for Drinking:**`);
+    unsuitableWells.slice(0, 5).forEach(site => {
+      const reasons = [];
+      if (site.tdsLevel >= 500) reasons.push('High TDS');
+      if (site.nitrate >= 45) reasons.push('High Nitrate');
+      if (site.fluoride >= 1.0) reasons.push('High Fluoride');
+      if (site.arsenic >= 0.01) reasons.push('High Arsenic');
+      lines.push(`   • ${site.name} (${site.district}): ${reasons.join(', ')}`);
+    });
+  }
+  
+  if (suitableWells.length > 0) {
+    lines.push(``, `✅ **Wells Suitable for Drinking:**`);
+    suitableWells.slice(0, 5).forEach(site => {
+      lines.push(`   • ${site.name} (${site.district}) - TDS: ${site.tdsLevel} mg/L`);
+    });
+  }
+  
+  lines.push(
+    ``,
+    `ℹ️ **Drinking Water Criteria:**`,
+    `   • TDS < 500 mg/L`,
+    `   • Nitrate < 45 mg/L`,
+    `   • Fluoride < 1.0 mg/L`,
+    `   • Arsenic < 0.01 mg/L`,
+    ``,
+    `📞 **Water Quality Testing:** ${stateContacts.tnWaterBoard.helpline}`
+  );
+  
+  return lines.join('\n');
+};
+
+const formatIrrigationResponse = (data, lang = 'en') => {
+  const suitableWells = data.filter(w => w.suitableForIrrigation !== false);
+  const unsuitableWells = data.filter(w => w.suitableForIrrigation === false);
+  const totalWells = data.length;
+  
+  const lines = [
+    `💧 **Irrigation Water Suitability Report**`,
+    ``,
+    `📊 **Statistics:**`,
+    `   • Suitable for Irrigation: ${suitableWells.length} wells (${((suitableWells.length/totalWells)*100).toFixed(1)}%)`,
+    `   • Not Suitable: ${unsuitableWells.length} wells`,
+  ];
+  
+  if (suitableWells.length > 0) {
+    lines.push(``, `✅ **Wells Suitable for Irrigation:**`);
+    suitableWells.slice(0, 8).forEach(site => {
+      lines.push(`   • ${site.name} (${site.district}) - TDS: ${site.tdsLevel} mg/L, Yield: ${site.yieldLph} LPH`);
+    });
+  }
+  
+  lines.push(
+    ``,
+    `ℹ️ **Irrigation Water Criteria:**`,
+    `   • TDS < 900 mg/L: Suitable`,
+    `   • TDS 900-2000 mg/L: Moderate (saline sensitive crops)`,
+    `   • TDS > 2000 mg/L: Not Suitable`,
+    ``,
+    `📞 **Agricultural Support:** ${stateContacts.tnWaterBoard.helpline}`
+  );
+  
+  return lines.join('\n');
+};
+
 // Main chat response builder
 const buildChatReply = (message, user, lang = 'en') => {
   const normalized = message.toLowerCase();
@@ -745,6 +1199,28 @@ const buildChatReply = (message, user, lang = 'en') => {
   if (normalized.includes('yield') || normalized.includes('production') || normalized.includes('output') || 
       normalized.includes('lph') || normalized.includes('liters')) {
     return formatYieldResponse(groundwaterData, lang);
+  }
+  
+  // Check for fluoride queries
+  if (normalized.includes('fluoride') || normalized.includes('fluorosis') || normalized.includes('ஃப்ளோரைடு')) {
+    return formatFluorideResponse(groundwaterData, lang);
+  }
+  
+  // Check for nitrate queries
+  if (normalized.includes('nitrate') || normalized.includes('nitrogen') || normalized.includes('நைட்ரேட்')) {
+    return formatNitrateResponse(groundwaterData, lang);
+  }
+  
+  // Check for drinking water suitability queries
+  if (normalized.includes('drinking') || normalized.includes('potable') || normalized.includes('safe to drink') ||
+      normalized.includes('குடிக்க') || normalized.includes('पीने योग्य')) {
+    return formatDrinkingWaterResponse(groundwaterData, lang);
+  }
+  
+  // Check for irrigation suitability queries
+  if (normalized.includes('irrigation') || normalized.includes('farming') || normalized.includes('agriculture') ||
+      normalized.includes('பாசனம்') || normalized.includes('सिंचाई')) {
+    return formatIrrigationResponse(groundwaterData, lang);
   }
   
   // Check for overview queries
@@ -920,10 +1396,33 @@ app.get('/api/data/map', auth(['admin', 'staff', 'common', 'guest'], true), (_re
     district: well.district,
     region: well.region,
     tdsLevel: well.tdsLevel,
+    pH: well.pH,
+    conductivity: well.conductivity,
+    hardness: well.hardness,
+    nitrate: well.nitrate,
+    fluoride: well.fluoride,
+    chloride: well.chloride,
+    sulfate: well.sulfate,
+    iron: well.iron,
+    arsenic: well.arsenic,
     contaminationRisk: well.contaminationRisk,
     yieldLph: well.yieldLph,
     waterLevelMeters: well.waterLevelMeters,
-    status: well.status
+    depthMeters: well.depthMeters,
+    rechargeTrend: well.rechargeTrend,
+    status: well.status,
+    wellType: well.wellType,
+    usageType: well.usageType,
+    ownership: well.ownership,
+    waterSource: well.waterSource,
+    waterQualityGrade: well.waterQualityGrade,
+    suitableForDrinking: well.suitableForDrinking,
+    suitableForIrrigation: well.suitableForIrrigation,
+    nearbyLandUse: well.nearbyLandUse,
+    seasonalVariation: well.seasonalVariation,
+    infrastructure: well.infrastructure,
+    lastInspection: well.lastInspection,
+    notes: well.notes
   }));
   
   const stats = {
@@ -955,10 +1454,15 @@ app.get('/api/data/contacts', auth(['admin', 'staff', 'common', 'guest'], true),
 });
 
 app.post('/api/admin/reload-data', auth(['admin']), (_req, res) => {
+  console.log('🔄 Admin requested data reload...');
   groundwaterData = mergeDataSources();
+  const overview = calculateOverview(groundwaterData);
+  console.log(`✅ Data reload complete: ${groundwaterData.length} wells loaded`);
   res.json({
-    message: `Reloaded ${groundwaterData.length} records from data files`,
-    overview: calculateOverview(groundwaterData)
+    message: `Successfully reloaded ${groundwaterData.length} records from data files`,
+    overview: overview,
+    totalWells: groundwaterData.length,
+    districts: [...new Set(groundwaterData.map(w => w.district).filter(Boolean))].length
   });
 });
 
@@ -1027,7 +1531,11 @@ app.post('/api/chatbot', auth(['admin', 'staff', 'common', 'guest'], true), (req
     return res.status(400).json({ error: 'Message is required' });
   }
 
-  const lang = language || detectLanguage(message);
+  // Prioritize explicit language selection over auto-detection
+  const lang = language && ['en', 'ta', 'hi', 'te'].includes(language) 
+    ? language 
+    : detectLanguage(message);
+  
   const reply = buildChatReply(message, req.user, lang);
   const suggestions = generateSuggestions(message, lang);
 
@@ -1037,11 +1545,6 @@ app.post('/api/chatbot', auth(['admin', 'staff', 'common', 'guest'], true), (req
     language: lang,
     timestamp: new Date().toISOString()
   });
-});
-
-app.use((err, _req, res, _next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
 });
 
 // Global error handler
